@@ -36,6 +36,10 @@ struct SessionListView: View {
             if let build = BuildInfo.current {
                 devBuildBanner(build)
             }
+            menuButton(action: { onSupervision?() }) {
+                Label("Supervision\u{2026}", systemImage: "rectangle.split.2x1")
+            }
+            .padding(.bottom, 4)
             Divider()
 
             if sessions.isEmpty {
@@ -177,9 +181,6 @@ struct SessionListView: View {
 
     private var menuSection: some View {
         VStack(spacing: 0) {
-            menuButton(action: { onSupervision?() }) {
-                Text("Supervision\u{2026}")
-            }
             menuButton(action: { onQuit?() }) {
                 Text("Quit")
             }
