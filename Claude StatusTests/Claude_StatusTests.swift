@@ -554,3 +554,16 @@ struct TranscriptReaderTests {
         #expect(entries.allSatisfy { if case .user(let text) = $0.kind { text.hasPrefix("message ") } else { false } })
     }
 }
+
+struct ClaudeDesktopSourceTests {
+
+    @Test func label() {
+        #expect(SessionSource.claudeDesktop.label == "Claude Desktop")
+        #expect(!SessionSource.claudeDesktop.isTerminal)
+    }
+
+    @Test func roundTripsThroughCodable() throws {
+        let data = try JSONEncoder().encode(SessionSource.claudeDesktop)
+        #expect(try JSONDecoder().decode(SessionSource.self, from: data) == .claudeDesktop)
+    }
+}
