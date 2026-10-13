@@ -25,6 +25,9 @@ struct SessionDiscovery {
     /// Keyed by session ID (UUID string from the .cstatus filename).
     var deadSessions: Set<String> = []
 
+    /// Conversation titles, read incrementally from each transcript.
+    let titleCache = TranscriptTitleCache()
+
     // MARK: - Discovery
 
     /// Result of a discovery pass: sessions plus their .cstatus file locations.
@@ -52,6 +55,7 @@ struct SessionDiscovery {
                 cstatusFiles[record.sessionId] = record.fileURL
             }
         }
+        titleCache.retain(onlyPaths: Set(sessions.compactMap(\.transcriptPath)))
         return DiscoveryResult(sessions: sessions, cstatusFiles: cstatusFiles)
     }
 
@@ -181,6 +185,7 @@ struct SessionDiscovery {
     private func assembleSession(from record: CStatusRecord, profileName: String?) -> ClaudeSession {
         let source = classifySource(pid: record.pid, ppid: record.ppid)
         let projectName = (record.cwd as NSString).lastPathComponent
+        let transcriptURL = TranscriptReader.transcriptURL(forCStatus: record.fileURL)
 
         let iTermSessionId: String?
         let tmuxPaneId: String?
@@ -222,7 +227,9 @@ struct SessionDiscovery {
             source: source,
             activity: record.activity,
             sessionName: record.sessionName,
-            profileName: profileName
+            profileName: profileName,
+            transcriptPath: transcriptURL.path,
+            conversationTitle: titleCache.title(for: transcriptURL)
         )
     }
 
@@ -251,6 +258,10 @@ struct SessionDiscovery {
             if path.contains(".vscode/extensions/anthropic.claude-code") {
                 return .vscode
             }
+            // The desktop app downloads its own claude binary under its support directory.
+            if path.contains("/Application Support/Claude/claude-code/") {
+                return .claudeDesktop
+            }
         }
 
         // Check environment variables on the Claude process
@@ -277,6 +288,9 @@ struct SessionDiscovery {
                 }
                 if path.contains("/Visual Studio Code.app/") || path.contains("/Code.app/") {
                     return .vscode
+                }
+                if path.contains("/Claude.app/") {
+                    return .claudeDesktop
                 }
 
                 // Terminals

@@ -82,6 +82,8 @@ enum SessionSource: Codable, Equatable {
     case vscode
     case jetbrains(ide: String)  // e.g. "PyCharm", "IntelliJ IDEA"
     case zed
+    /// Claude Code run by the Claude desktop app.
+    case claudeDesktop
 
     var label: String {
         switch self {
@@ -90,6 +92,7 @@ enum SessionSource: Codable, Equatable {
         case .vscode: "VS Code"
         case .jetbrains(let ide): ide
         case .zed: "Zed"
+        case .claudeDesktop: "Claude Desktop"
         }
     }
 
@@ -129,6 +132,15 @@ struct ClaudeSession: Identifiable, Codable, Equatable {
     /// Display name of the Claude Code profile (config dir) this session belongs to.
     /// Nil for data written before profile support.
     var profileName: String? = nil
+    /// Path of the session's transcript (`<session-id>.jsonl`), next to its .cstatus file.
+    var transcriptPath: String? = nil
+    /// Conversation title from the transcript: the /rename title, else the generated one.
+    var conversationTitle: String? = nil
+
+    /// Conversation name: the /name-session name, else the transcript's title.
+    var displayTitle: String? {
+        sessionName ?? conversationTitle
+    }
 
     /// Use sessionId as the SwiftUI identity (stable, unlike PIDs).
     var id: String { sessionId }
