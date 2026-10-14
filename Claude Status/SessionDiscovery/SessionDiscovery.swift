@@ -25,8 +25,8 @@ struct SessionDiscovery {
     /// Keyed by session ID (UUID string from the .cstatus filename).
     var deadSessions: Set<String> = []
 
-    /// Conversation titles, read incrementally from each transcript.
-    let titleCache = TranscriptTitleCache()
+    /// Conversation titles and prompt cache state, read incrementally from each transcript.
+    let transcriptCache = TranscriptMetadataCache()
 
     // MARK: - Discovery
 
@@ -55,7 +55,7 @@ struct SessionDiscovery {
                 cstatusFiles[record.sessionId] = record.fileURL
             }
         }
-        titleCache.retain(onlyPaths: Set(sessions.compactMap(\.transcriptPath)))
+        transcriptCache.retain(onlyPaths: Set(sessions.compactMap(\.transcriptPath)))
         return DiscoveryResult(sessions: sessions, cstatusFiles: cstatusFiles)
     }
 
@@ -186,6 +186,7 @@ struct SessionDiscovery {
         let source = classifySource(pid: record.pid, ppid: record.ppid)
         let projectName = (record.cwd as NSString).lastPathComponent
         let transcriptURL = TranscriptReader.transcriptURL(forCStatus: record.fileURL)
+        let transcript = transcriptCache.metadata(for: transcriptURL)
 
         let iTermSessionId: String?
         let tmuxPaneId: String?
@@ -229,7 +230,8 @@ struct SessionDiscovery {
             sessionName: record.sessionName,
             profileName: profileName,
             transcriptPath: transcriptURL.path,
-            conversationTitle: titleCache.title(for: transcriptURL)
+            conversationTitle: transcript.title,
+            promptCacheExpiresAt: transcript.promptCache?.expiresAt
         )
     }
 

@@ -66,7 +66,7 @@ Claude Status/                         # Main app target
     StateResolver.swift                # DispatchSource file watchers (one per profile); JSONL timestamp fallback
     TerminalFocuser.swift              # SessionFocuser: focuses host app (AppleScript for iTerm2/Ghostty, process activation for others)
     VSCodeSessionLocator.swift         # Finds the VS Code window of an extension session (extension host log dir)
-    TranscriptReader.swift             # Transcript tail for the preview; conversation titles (incremental)
+    TranscriptReader.swift             # Transcript tail for the preview; titles and prompt cache expiry (incremental)
     VSCodeURITrust.swift               # Reads/adds the Claude Code extension in VS Code's trusted URI handlers setting
     ProductivityTracker.swift          # Time-in-state tracking, concurrency, score (persists to App Group)
     PluginDetector.swift               # Checks installed_plugins.json and settings.json for hook status
@@ -152,6 +152,14 @@ so the click looks like a no-op. On the first click the app checks `extensions.c
 `~/Library/Application Support/Code/User/settings.json` and, if `anthropic.claude-code` is missing, offers to add it
 (in-place text edit that keeps the file's formatting). Declining with "Don't ask again" sets `vscodeTrustPromptDeclined`
 in the app's defaults and keeps the plain VS Code activation.
+
+### Prompt Cache Expiry
+
+Waiting and idle sessions show a countdown to their prompt cache expiry (`cache 42:13`, green, orange under 15 min,
+red under 5 min), and sort by it within their state. `TranscriptMetadataCache` reads it from the transcript without
+decoding JSON: the request time is the last `"type":"user"` line before a response, and the TTL comes from that
+response's `usage.cache_creation` (`ephemeral_1h_input_tokens` → 1 h, `ephemeral_5m_input_tokens` → 5 min; a
+cache-read-only response keeps the previous TTL). Subagent (`isSidechain`) lines are ignored.
 
 ### Productivity Tracking
 

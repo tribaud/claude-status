@@ -74,6 +74,9 @@ struct SessionRowView: View {
                 Text(session.timeSinceActivity)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                if session.showsPromptCacheCountdown, let expiry = session.promptCacheExpiresAt {
+                    PromptCacheCountdown(expiresAt: expiry)
+                }
             }
         }
         .padding(.vertical, 5)
@@ -107,6 +110,47 @@ struct SessionRowView: View {
         case .waiting: .orange
         case .compacting: .blue
         case .idle: .gray
+        }
+    }
+}
+
+/// Time left before the session's prompt cache expires, updated every second.
+/// Answering before it reaches zero reuses the cached context.
+struct PromptCacheCountdown: View {
+    let expiresAt: Date
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .medium
+        return formatter
+    }()
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = expiresAt.timeIntervalSince(context.date)
+            Text(remaining > 0 ? "cache \(Self.format(remaining))" : "cache expired")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Self.color(remaining: remaining))
+                .help("Prompt cache expires at \(Self.timeFormatter.string(from: expiresAt))")
+        }
+    }
+
+    /// "42:13", or "1:00:00" from one hour up.
+    static func format(_ remaining: TimeInterval) -> String {
+        let seconds = Int(remaining.rounded(.up))
+        let (hours, minutes, secs) = (seconds / 3600, seconds % 3600 / 60, seconds % 60)
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, secs)
+            : String(format: "%d:%02d", minutes, secs)
+    }
+
+    static func color(remaining: TimeInterval) -> Color {
+        switch remaining {
+        case ..<0: .secondary
+        case ..<300: .red
+        case ..<900: .orange
+        default: .green
         }
     }
 }

@@ -525,16 +525,16 @@ struct TranscriptReaderTests {
             }
         }
 
-        let cache = TranscriptTitleCache()
+        let cache = TranscriptMetadataCache()
         try append(["type": "user", "message": ["content": "hi"]])
-        #expect(cache.title(for: url) == nil)
+        #expect(cache.metadata(for: url).title == nil)
         try append(["type": "ai-title", "aiTitle": "First"])
-        #expect(cache.title(for: url) == "First")
+        #expect(cache.metadata(for: url).title == "First")
         try append(["type": "ai-title", "aiTitle": "Second"])
-        #expect(cache.title(for: url) == "Second")
+        #expect(cache.metadata(for: url).title == "Second")
         try append(["type": "custom-title", "customTitle": "Mine"])
         try append(["type": "ai-title", "aiTitle": "Third"])
-        #expect(cache.title(for: url) == "Mine")
+        #expect(cache.metadata(for: url).title == "Mine")
     }
 
     @Test func tailDropsCutFirstLine() throws {
