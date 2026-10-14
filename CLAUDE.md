@@ -153,6 +153,14 @@ so the click looks like a no-op. On the first click the app checks `extensions.c
 (in-place text edit that keeps the file's formatting). Declining with "Don't ask again" sets `vscodeTrustPromptDeclined`
 in the app's defaults and keeps the plain VS Code activation.
 
+### Stale Active Sessions
+
+The hook can leave a session Active after its turn ended: a background agent that never reports completion keeps
+`end_turn` from going idle, and a resumed session can replay an old prompt (e.g. a `<task-notification>`) as a new one.
+`SessionDiscovery` shows an Active session as Idle when neither its transcript nor its subagents'
+(`<session-id>/subagents/*.jsonl`) changed for 10 minutes, unless its last response awaits a tool result
+(`stop_reason: tool_use`), since long builds or test runs write nothing while they run.
+
 ### Prompt Cache Expiry
 
 Waiting and idle sessions show a countdown to their prompt cache expiry (`cache 42:13`, green, orange under 15 min,

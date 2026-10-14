@@ -19,9 +19,9 @@ struct PromptCacheTests {
          "message": ["role": "user", "content": "text with \"timestamp\":\"2000-01-01T00:00:00.000Z\" inside"]]
     }
 
-    private func assistant(_ at: String, oneHour: Int, fiveMinutes: Int) -> [String: Any] {
+    private func assistant(_ at: String, oneHour: Int, fiveMinutes: Int, stop: String = "end_turn") -> [String: Any] {
         ["type": "assistant", "isSidechain": false, "timestamp": at, "message": [
-            "role": "assistant", "content": [["type": "text", "text": "ok"]],
+            "role": "assistant", "content": [["type": "text", "text": "ok"]], "stop_reason": stop,
             "usage": ["cache_creation": ["ephemeral_1h_input_tokens": oneHour, "ephemeral_5m_input_tokens": fiveMinutes]],
         ]]
     }
@@ -29,7 +29,7 @@ struct PromptCacheTests {
     @Test func readsCacheLinesWithoutDecoding() {
         #expect(TranscriptReader.cacheLine(line(user("2026-10-14T13:44:33.526Z"))) == .request(at: "2026-10-14T13:44:33.526Z"))
         #expect(TranscriptReader.cacheLine(line(assistant("2026-10-14T13:44:39.150Z", oneHour: 563, fiveMinutes: 0)))
-            == .response(at: "2026-10-14T13:44:39.150Z", oneHourTokens: 563, fiveMinuteTokens: 0))
+            == .response(at: "2026-10-14T13:44:39.150Z", oneHourTokens: 563, fiveMinuteTokens: 0, stopReason: "end_turn"))
         #expect(TranscriptReader.cacheLine(line(user("2026-10-14T13:44:33.526Z", sidechain: true))) == nil)
         #expect(TranscriptReader.cacheLine(line(["type": "ai-title", "aiTitle": "x"])) == nil)
     }
@@ -112,5 +112,42 @@ struct PromptCacheTests {
             session("unknown", expires: nil, activity: -1),
         ]
         #expect(sessions.sortedByStateAndActivity(now: now).map(\.sessionId) == ["soon", "late", "expired", "unknown"])
+    }
+
+    @Test func tracksWhetherAToolIsRunning() throws {
+        let url = try write([
+            user("2026-10-14T13:00:00.000Z"),
+            assistant("2026-10-14T13:00:05.000Z", oneHour: 10, fiveMinutes: 0, stop: "tool_use"),
+        ])
+        defer { try? FileManager.default.removeItem(at: url) }
+        let cache = TranscriptMetadataCache()
+        #expect(cache.metadata(for: url).awaitsToolResult)
+
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        var more = line(user("2026-10-14T13:09:00.000Z")); more.append(UInt8(ascii: "\n"))
+        more.append(line(assistant("2026-10-14T13:09:05.000Z", oneHour: 0, fiveMinutes: 0))); more.append(UInt8(ascii: "\n"))
+        try handle.write(contentsOf: more)
+        try handle.close()
+        #expect(!cache.metadata(for: url).awaitsToolResult)
+    }
+
+    @Test func staleActiveUsesTranscriptAndSubagentWrites() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let transcript = dir.appendingPathComponent("session.jsonl")
+        let subagents = dir.appendingPathComponent("session/subagents", isDirectory: true)
+        try FileManager.default.createDirectory(at: subagents, withIntermediateDirectories: true)
+        try Data().write(to: transcript)
+        let old = Date().addingTimeInterval(-3600)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: transcript.path)
+
+        let later = Date().addingTimeInterval(1)
+        #expect(SessionDiscovery.isStaleActive(transcriptURL: transcript, awaitsToolResult: false, now: later))
+        #expect(!SessionDiscovery.isStaleActive(transcriptURL: transcript, awaitsToolResult: true, now: later))
+
+        // A subagent still writing keeps the session active.
+        try Data().write(to: subagents.appendingPathComponent("agent-1.jsonl"))
+        #expect(!SessionDiscovery.isStaleActive(transcriptURL: transcript, awaitsToolResult: false, now: later))
     }
 }

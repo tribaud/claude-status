@@ -163,8 +163,9 @@ extension TranscriptReader {
     enum CacheLine: Equatable {
         /// A user message or tool result: the next API request is sent right after.
         case request(at: String)
-        /// An API response with its cache writes, in tokens per TTL.
-        case response(at: String, oneHourTokens: Int, fiveMinuteTokens: Int)
+        /// An API response with its cache writes, in tokens per TTL, and its
+        /// `stop_reason` (nil while streaming).
+        case response(at: String, oneHourTokens: Int, fiveMinuteTokens: Int, stopReason: String?)
     }
 
     static func cacheLine(_ line: Data) -> CacheLine? {
@@ -181,12 +182,22 @@ extension TranscriptReader {
             return .response(
                 at: date,
                 oneHourTokens: integer(after: #""ephemeral_1h_input_tokens":"#, in: line) ?? 0,
-                fiveMinuteTokens: integer(after: #""ephemeral_5m_input_tokens":"#, in: line) ?? 0
+                fiveMinuteTokens: integer(after: #""ephemeral_5m_input_tokens":"#, in: line) ?? 0,
+                stopReason: string(after: stopReasonKey, in: line)
             )
         }
     }
 
     private static let timestampKey = Data(#""timestamp":""#.utf8)
+    private static let stopReasonKey = Data(#""stop_reason":""#.utf8)
+
+    /// Short string value following `key` (which ends with the opening quote).
+    private static func string(after key: Data, in line: Data) -> String? {
+        guard let start = line.endOfBytes(key) else { return nil }
+        let rest = line[start...].prefix(40)
+        guard let end = rest.firstIndex(of: UInt8(ascii: "\"")) else { return nil }
+        return String(decoding: rest[rest.startIndex..<end], as: UTF8.self)
+    }
 
     private static func rawTimestamp(in line: Data) -> String? {
         guard let start = line.endOfBytes(timestampKey) else { return nil }
@@ -213,6 +224,9 @@ final class TranscriptMetadataCache {
     struct Metadata: Equatable {
         var title: String?
         var promptCache: PromptCacheState?
+        /// Whether the main conversation waits on a tool result (`stop_reason`
+        /// `tool_use`): a long build or test run writes nothing while it runs.
+        var awaitsToolResult = false
     }
 
     private struct State {
@@ -220,6 +234,7 @@ final class TranscriptMetadataCache {
         var customTitle: String?
         var aiTitle: String?
         var lastRequestAt: String?
+        var lastStopReason: String?
         var cacheRefreshedAt: String?
         var cacheTTL: TimeInterval?
         /// Parsed `cacheRefreshedAt`, kept while it doesn't change.
@@ -251,7 +266,11 @@ final class TranscriptMetadataCache {
             state.promptCacheRaw = raw
         }
         states[url.path] = state
-        return Metadata(title: state.customTitle ?? state.aiTitle, promptCache: state.promptCache)
+        return Metadata(
+            title: state.customTitle ?? state.aiTitle,
+            promptCache: state.promptCache,
+            awaitsToolResult: state.lastStopReason == "tool_use"
+        )
     }
 
     private static func apply(_ line: Data, to state: inout State) {
@@ -263,7 +282,9 @@ final class TranscriptMetadataCache {
         switch TranscriptReader.cacheLine(line) {
         case .request(let date):
             state.lastRequestAt = date
-        case .response(let date, let oneHour, let fiveMinutes):
+            state.lastStopReason = nil
+        case .response(let date, let oneHour, let fiveMinutes, let stopReason):
+            state.lastStopReason = stopReason
             // A response without cache writes only read the cache, which keeps its TTL.
             state.cacheTTL = oneHour > 0 ? 3600
                 : fiveMinutes > 0 ? 300
