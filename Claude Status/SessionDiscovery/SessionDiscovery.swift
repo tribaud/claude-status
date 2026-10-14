@@ -25,8 +25,8 @@ struct SessionDiscovery {
     /// Keyed by session ID (UUID string from the .cstatus filename).
     var deadSessions: Set<String> = []
 
-    /// Conversation titles, read incrementally from each transcript.
-    let titleCache = TranscriptTitleCache()
+    /// Conversation titles and prompt cache state, read incrementally from each transcript.
+    let transcriptCache = TranscriptMetadataCache()
 
     // MARK: - Discovery
 
@@ -55,7 +55,7 @@ struct SessionDiscovery {
                 cstatusFiles[record.sessionId] = record.fileURL
             }
         }
-        titleCache.retain(onlyPaths: Set(sessions.compactMap(\.transcriptPath)))
+        transcriptCache.retain(onlyPaths: Set(sessions.compactMap(\.transcriptPath)))
         return DiscoveryResult(sessions: sessions, cstatusFiles: cstatusFiles)
     }
 
@@ -186,6 +186,7 @@ struct SessionDiscovery {
         let source = classifySource(pid: record.pid, ppid: record.ppid)
         let projectName = (record.cwd as NSString).lastPathComponent
         let transcriptURL = TranscriptReader.transcriptURL(forCStatus: record.fileURL)
+        let transcript = transcriptCache.metadata(for: transcriptURL)
 
         let iTermSessionId: String?
         let tmuxPaneId: String?
@@ -214,23 +215,64 @@ struct SessionDiscovery {
             tmuxSocket = nil
         }
 
+        // The hook can leave a session Active after its turn ended (a background
+        // agent never reported done, a resumed session replaying an old prompt).
+        let isStale = record.state == .active && Self.isStaleActive(
+            transcriptURL: transcriptURL,
+            awaitsToolResult: transcript.awaitsToolResult,
+            now: Date()
+        )
+
         return ClaudeSession(
             sessionId: record.sessionId,
             pid: record.pid,
             workingDirectory: record.cwd,
             projectName: projectName,
-            state: record.state,
+            state: isStale ? .idle : record.state,
             lastActivityAt: record.timestamp,
             iTermSessionId: iTermSessionId,
             tmuxPaneId: tmuxPaneId,
             tmuxSocket: tmuxSocket,
             source: source,
-            activity: record.activity,
+            activity: isStale ? "" : record.activity,
             sessionName: record.sessionName,
             profileName: profileName,
             transcriptPath: transcriptURL.path,
-            conversationTitle: titleCache.title(for: transcriptURL)
+            conversationTitle: transcript.title,
+            promptCacheExpiresAt: transcript.promptCache?.expiresAt
         )
+    }
+
+    // MARK: - Stale State
+
+    /// How long an Active session may go without writing its transcript, or a
+    /// subagent's, before it counts as idle.
+    static let staleActiveInterval: TimeInterval = 10 * 60
+
+    /// Whether an Active session has visibly stopped: neither its transcript nor
+    /// its subagents' (`<session-id>/subagents/*.jsonl`) changed for
+    /// `staleActiveInterval`, and it doesn't wait on a tool, which can run for
+    /// long without writing anything.
+    static func isStaleActive(transcriptURL: URL, awaitsToolResult: Bool, now: Date) -> Bool {
+        guard !awaitsToolResult, let lastWrite = lastWrite(transcriptURL: transcriptURL) else { return false }
+        return now.timeIntervalSince(lastWrite) > staleActiveInterval
+    }
+
+    /// Latest modification of the transcript or of its subagents' transcripts.
+    static func lastWrite(transcriptURL: URL) -> Date? {
+        let fileManager = FileManager.default
+        func modified(_ url: URL) -> Date? {
+            (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        }
+        guard var latest = modified(transcriptURL) else { return nil }
+        let subagents = transcriptURL.deletingPathExtension().appendingPathComponent("subagents")
+        let files = (try? fileManager.contentsOfDirectory(
+            at: subagents, includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []
+        for file in files where file.pathExtension == "jsonl" {
+            if let date = modified(file), date > latest { latest = date }
+        }
+        return latest
     }
 
     // MARK: - Process Validation

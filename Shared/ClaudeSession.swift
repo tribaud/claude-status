@@ -136,10 +136,25 @@ struct ClaudeSession: Identifiable, Codable, Equatable {
     var transcriptPath: String? = nil
     /// Conversation title from the transcript: the /rename title, else the generated one.
     var conversationTitle: String? = nil
+    /// When the prompt cache of the last API request expires; the next message after
+    /// that re-sends the whole context.
+    var promptCacheExpiresAt: Date? = nil
 
     /// Conversation name: the /name-session name, else the transcript's title.
     var displayTitle: String? {
         sessionName ?? conversationTitle
+    }
+
+    /// Whether a prompt cache countdown means something: the session waits for the
+    /// user. Active sessions refresh their cache on every request.
+    var showsPromptCacheCountdown: Bool {
+        promptCacheExpiresAt != nil && (state == .waiting || state == .idle)
+    }
+
+    /// Expiry of a still-valid prompt cache worth racing against, else nil.
+    func livePromptCacheExpiry(now: Date) -> Date? {
+        guard showsPromptCacheCountdown, let expiry = promptCacheExpiresAt, expiry > now else { return nil }
+        return expiry
     }
 
     /// Use sessionId as the SwiftUI identity (stable, unlike PIDs).
@@ -170,13 +185,23 @@ struct ClaudeSession: Identifiable, Codable, Equatable {
 }
 
 extension Array where Element == ClaudeSession {
-    /// Sessions sorted by state (Waiting, Active, Compacting, Idle), then most recent first.
+    /// Sessions sorted by state (Waiting, Active, Compacting, Idle); within a state,
+    /// prompt caches expiring soonest first, then most recent activity.
     var sortedByStateAndActivity: [ClaudeSession] {
+        sortedByStateAndActivity(now: Date())
+    }
+
+    func sortedByStateAndActivity(now: Date) -> [ClaudeSession] {
         sorted {
             if $0.state.sortOrder != $1.state.sortOrder {
                 return $0.state.sortOrder < $1.state.sortOrder
             }
-            return $0.lastActivityAt > $1.lastActivityAt
+            switch ($0.livePromptCacheExpiry(now: now), $1.livePromptCacheExpiry(now: now)) {
+            case let (lhs?, rhs?) where lhs != rhs: return lhs < rhs
+            case (.some, nil): return true
+            case (nil, .some): return false
+            default: return $0.lastActivityAt > $1.lastActivityAt
+            }
         }
     }
 }
